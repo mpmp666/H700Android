@@ -25,7 +25,7 @@ Fork 中若尚未启用 Actions，先在 Actions 页面启用。推送工作流�
 
 ## 触发完整构建
 
-Actions → H700 cloud build → Run workflow，选择本分支，将 `build_image` 设为 true。`runner` 默认 `ubuntu-24.04`；如使用已登记且有足够磁盘的独立 Linux 构建机，可填写它的唯一自托管标签。工作流不会注册机器或创建付费运行器。
+分支推送首次运行后，使用下方 CLI 命令对本分支触发，将 `build_image` 设为 true。只有将工作流纳入默认分支后，才使用 Actions 页面中的 Run workflow 按钮。`runner` 默认 `ubuntu-24.04`；如使用已登记且有足够磁盘的独立 Linux 构建机，可填写它的唯一自托管标签。工作流不会注册机器或创建付费运行器。
 
 CLI 示例：
 

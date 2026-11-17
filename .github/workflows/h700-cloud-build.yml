@@ -1,0 +1,147 @@
+name: H700 cloud build
+
+on:
+  push:
+    branches: [codex/github-actions-h700]
+    paths:
+      - '.github/workflows/h700-cloud-build.yml'
+      - 'tools/ci/**'
+      - 'tools/public_build/**'
+      - 'tools/navigation_tests/**'
+      - 'build-support/public/**'
+  workflow_dispatch:
+    inputs:
+      build_image:
+        description: 'Attempt the full Android image build (requires both download URL secrets and sufficient disk)'
+        type: boolean
+        default: false
+      runner:
+        description: 'Linux x86_64 runner label for the image attempt; requires sufficient disk and systemd/cgroup v2'
+        type: string
+        default: ubuntu-24.04
+
+permissions:
+  contents: read
+
+concurrency:
+  group: h700-cloud-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+
+jobs:
+  validate:
+    name: Source validation and real Java compilation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Measure runner and report input readiness
+        env:
+          H700_ANDROID_URL: ${{ secrets.H700_ANDROID_URL }}
+          H700_IMAGE_URL: ${{ secrets.H700_IMAGE_URL }}
+        run: bash tools/ci/h700_actions.sh report
+      - name: Validate all public payloads and copy recipes
+        run: |
+          mkdir -p "$RUNNER_TEMP/h700-validation"
+          python3 -B tools/public_build/validate_manifest.py \
+            --output "$RUNNER_TEMP/h700-validation/source-validation.json"
+          python3 -B tools/public_build/test_public_build.py
+      - name: Compile production navigation helpers and run host regressions
+        run: |
+          bash tools/public_build/run-limited.sh \
+            python3 -B "$GITHUB_WORKSPACE/tools/navigation_tests/run_source64.py" \
+            --work "$RUNNER_TEMP/h700-validation/navigation"
+      - name: Publish validation reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: h700-validation-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/h700-validation/source-validation.json
+            ${{ runner.temp }}/h700-validation/navigation/result.json
+            ${{ runner.temp }}/h700-validation/navigation/service-fragments-result.json
+            ${{ runner.temp }}/h700-validation/navigation/*.log
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Summarize validation
+        run: |
+          printf '\nPublic source validation, 11 tool tests, and the production navigation Java host regressions passed. These checks do not produce an Android APK or system image.\n' >> "$GITHUB_STEP_SUMMARY"
+
+  image:
+    name: Android partitions and community card image
+    if: github.event_name == 'workflow_dispatch' && inputs.build_image
+    needs: validate
+    runs-on: ${{ inputs.runner || 'ubuntu-24.04' }}
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Require exact input sources and sufficient storage
+        env:
+          H700_ANDROID_URL: ${{ secrets.H700_ANDROID_URL }}
+          H700_IMAGE_URL: ${{ secrets.H700_IMAGE_URL }}
+        run: bash tools/ci/h700_actions.sh preflight
+      - name: Install documented Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential gcc-multilib g++-multilib bc bison flex gperf libtool \
+            git curl rsync zip unzip xz-utils lzop m4 patch \
+            libssl-dev libxml2-utils zlib1g-dev lib32z1-dev libncurses-dev \
+            python3 openssl e2fsprogs util-linux sudo systemd qemu-user
+      - name: Download and verify locked external inputs
+        env:
+          H700_ANDROID_URL: ${{ secrets.H700_ANDROID_URL }}
+          H700_IMAGE_URL: ${{ secrets.H700_IMAGE_URL }}
+        run: bash tools/ci/h700_actions.sh download
+      - name: Prepare isolated source and temporary signing identity
+        run: bash tools/ci/h700_actions.sh prepare
+      - name: Attempt Android build within project resource limits
+        run: |
+          set -o pipefail
+          bash tools/public_build/run-limited.sh \
+            bash "$GITHUB_WORKSPACE/tools/public_build/build.sh" \
+            "$H700_WORK/android" "$H700_WORK/android-out" \
+            2>&1 | tee "$H700_WORK/build.log"
+      - name: Assemble and verify the community card image
+        run: |
+          set -o pipefail
+          bash tools/public_build/run-limited.sh \
+            python3 -B "$GITHUB_WORKSPACE/tools/public_build/pack.py" \
+            --inputs "$H700_WORK/image-inputs" \
+            --product "$H700_WORK/android-out/target/product/roc_os_source64" \
+            --output "$H700_WORK/card" \
+            2>&1 | tee "$H700_WORK/pack.log"
+          cd "$H700_WORK/card"
+          sha256sum ROC_OS_ARM64_community.img.gz > SHA256SUMS
+      - name: Upload verified image
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ROC-OS-community-${{ github.run_id }}
+          path: |
+            ${{ env.H700_WORK }}/card/ROC_OS_ARM64_community.img.gz
+            ${{ env.H700_WORK }}/card/result.json
+            ${{ env.H700_WORK }}/card/SHA256SUMS
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 1
+      - name: Upload build logs and public receipts
+        if: always() && env.H700_WORK != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: h700-build-reports-${{ github.run_id }}
+          path: |
+            ${{ env.H700_WORK }}/build.log
+            ${{ env.H700_WORK }}/pack.log
+            ${{ env.H700_WORK }}/android-out/target/product/roc_os_source64/public-build.json
+          if-no-files-found: warn
+          retention-days: 7

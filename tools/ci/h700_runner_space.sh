@@ -37,6 +37,25 @@ ALLOWLIST = (
     '/usr/share/swift',
     '/usr/local/share/powershell',
     '/opt/az',
+    # Ubuntu 24.04 runner-image toolset: three Go, four Ruby, three PyPy and
+    # two Node versions. Keep Python's toolcache for any selected host Python.
+    '/opt/hostedtoolcache/go',
+    '/opt/hostedtoolcache/Ruby',
+    '/opt/hostedtoolcache/PyPy',
+    '/opt/hostedtoolcache/node',
+    '/usr/share/miniconda',
+    '/usr/local/lib/node_modules',
+    # Unused cloud CLIs and browser test preinstalls; no shared host libraries.
+    '/usr/lib/google-cloud-sdk',
+    '/usr/local/aws-cli',
+    '/usr/local/aws-sam-cli',
+    '/opt/google/chrome',
+    '/opt/microsoft/msedge',
+    '/usr/local/share/chromium',
+    '/usr/lib/firefox',
+    '/usr/local/share/chromedriver-linux64',
+    '/usr/local/share/edge_driver',
+    '/usr/local/share/gecko_driver',
 )
 KEEP_PATHS = (
     '/usr/lib/jvm', '/usr/bin', '/usr/sbin', '/usr/lib/gcc', '/usr/lib/llvm',

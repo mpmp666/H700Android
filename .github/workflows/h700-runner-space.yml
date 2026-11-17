@@ -1,0 +1,52 @@
+name: H700 runner disk experiment
+
+on:
+  push:
+    branches: [codex/github-actions-h700]
+    paths:
+      - 'tools/ci/h700_runner_space.sh'
+      - '.github/workflows/h700-runner-space.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: h700-runner-space-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  disk:
+    name: Measure optional preinstall removal
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Prepare disposable runner and record disk measurements
+        run: |
+          set -euo pipefail
+          report_dir=$(mktemp -d "$RUNNER_TEMP/h700-runner-space.XXXXXX")
+          printf 'H700_SPACE_REPORT=%s/report.md\n' "$report_dir" >> "$GITHUB_ENV"
+          bash tools/ci/h700_runner_space.sh prepare | tee "$report_dir/report.md"
+      - name: Publish disk summary
+        if: always() && env.H700_SPACE_REPORT != ''
+        run: |
+          if [[ -f "$H700_SPACE_REPORT" ]]; then
+            while IFS= read -r line; do
+              printf '%s\n' "$line"
+            done < "$H700_SPACE_REPORT" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload small disk report
+        if: always() && env.H700_SPACE_REPORT != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: h700-runner-space-${{ github.run_id }}
+          path: ${{ env.H700_SPACE_REPORT }}
+          if-no-files-found: warn
+          retention-days: 7
